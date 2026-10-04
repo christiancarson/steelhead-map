@@ -728,9 +728,21 @@ function goOffline(why) {
   map.setStyle(OFFLINE_STYLE);
   map.once("style.load", () => { build(); applyDate(); applyToggles(); });
 }
+// Dropping the basemap is a one-way trip for the session, so it takes more than one error to
+// earn it. Mapbox GL reports a missing sprite, an unresolved font and a tile that 404s past the
+// edge of coverage all as errors carrying the word "load", and matching that pattern meant a
+// single hiccup on mobile data killed the satellite imagery and never restored it. Require the
+// device to be genuinely offline, or several failures inside a short window.
+let tileFails = 0, tileFailAt = 0;
 map.on("error", (e) => {
   const m = String((e && e.error && e.error.message) || "");
-  if (/network|fetch|Failed|load/i.test(m)) goOffline("tiles unreachable");
+  const status = e && e.error && e.error.status;
+  if (status === 401 || status === 403) return goOffline("token rejected");
+  if (!/network|fetch|failed to fetch|NetworkError/i.test(m)) return;
+  const now = Date.now();
+  if (now - tileFailAt > 10000) tileFails = 0;
+  tileFailAt = now;
+  if (++tileFails >= 5 && !navigator.onLine) goOffline("tiles unreachable");
 });
 window.addEventListener("offline", () => goOffline("device offline"));
 document.getElementById("l-offline").onchange = (e) => {
